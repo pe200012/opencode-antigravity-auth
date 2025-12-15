@@ -17,7 +17,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 ```json
 {
-  "plugin": ["opencode-antigravity-auth@1.0.7"]
+  "plugin": ["opencode-antigravity-auth@1.0.6"]
 }
 ```
 
@@ -139,5 +139,15 @@ Use at your own risk. Proceed only if you understand and accept these risks.
 
 ## Credits
 
-- Inspired by and different from [opencode-gemini-auth](https://github.com/jenslys/opencode-gemini-auth) by [jenslys](https://github.com/jenslys). Thanks for the groundwork! 🚀
-- Thanks to [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) for the inspiration.
+Built with help and inspiration from:
+
+- [opencode-gemini-auth](https://github.com/jenslys/opencode-gemini-auth) — Gemini OAuth groundwork by [@jenslys](https://github.com/jenslys)
+- [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) — Helpful reference for Antigravity API
+
+## Support
+
+If this plugin helps you, consider supporting its continued maintenance:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/S6S81QBOIR)
+
+
