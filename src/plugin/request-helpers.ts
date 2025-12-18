@@ -89,19 +89,17 @@ export function extractThinkingConfig(
 
 /**
  * Determines the final thinking configuration based on model capabilities and user settings.
- * Claude models require signed thinking blocks for multi-turn conversations.
- * Since previous thinking blocks may lack signatures, we disable thinking for Claude multi-turn.
+ * For Claude thinking models, we keep thinking enabled even in multi-turn conversations.
+ * The filterUnsignedThinkingBlocks function will handle signature validation/restoration.
  */
 export function resolveThinkingConfig(
   userConfig: ThinkingConfig | undefined,
   isThinkingModel: boolean,
-  isClaudeModel: boolean,
-  hasAssistantHistory: boolean,
+  _isClaudeModel: boolean,
+  _hasAssistantHistory: boolean,
 ): ThinkingConfig | undefined {
-  if (isClaudeModel && hasAssistantHistory) {
-    return { includeThoughts: false, thinkingBudget: 0 };
-  }
-
+  // For thinking-capable models (including Claude thinking models), enable thinking by default
+  // The signature validation/restoration is handled by filterUnsignedThinkingBlocks
   if (isThinkingModel && !userConfig) {
     return { includeThoughts: true, thinkingBudget: DEFAULT_THINKING_BUDGET };
   }
@@ -120,35 +118,219 @@ function isThinkingPart(part: Record<string, unknown>): boolean {
 }
 
 /**
+ * Removes trailing thinking blocks from a content array.
+ * Claude API requires that assistant messages don't end with thinking blocks.
+ * Only removes unsigned thinking blocks; preserves those with valid signatures.
+ */
+function removeTrailingThinkingBlocks(contentArray: any[]): any[] {
+  const result = [...contentArray];
+  while (result.length > 0 && isThinkingPart(result[result.length - 1]) && !hasValidSignature(result[result.length - 1])) {
+    result.pop();
+  }
+  return result;
+}
+
+/**
  * Checks if a thinking part has a valid signature.
+ * A valid signature is a non-empty string with at least 50 characters.
  */
 function hasValidSignature(part: Record<string, unknown>): boolean {
-  if (part.thought === true) {
-    return Boolean(part.thoughtSignature);
+  const signature = part.thought === true ? part.thoughtSignature : part.signature;
+  return typeof signature === "string" && signature.length >= 50;
+}
+
+/**
+ * Gets the text content from a thinking part.
+ */
+function getThinkingText(part: Record<string, unknown>): string {
+  if (typeof part.text === "string") return part.text;
+  if (typeof part.thinking === "string") return part.thinking;
+
+  // Some SDKs wrap thinking in an object like { text: "...", cache_control: {...} }
+  if (part.thinking && typeof part.thinking === "object") {
+    const maybeText = (part.thinking as any).text ?? (part.thinking as any).thinking;
+    if (typeof maybeText === "string") return maybeText;
   }
-  return Boolean(part.signature);
+
+  return "";
+}
+
+/**
+ * Recursively strips cache_control and providerOptions from any object.
+ * These fields can be injected by SDKs, but Claude rejects them inside thinking blocks.
+ */
+function stripCacheControlRecursively(obj: unknown): unknown {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(item => stripCacheControlRecursively(item));
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (key === "cache_control" || key === "providerOptions") continue;
+    result[key] = stripCacheControlRecursively(value);
+  }
+  return result;
+}
+
+/**
+ * Sanitizes a thinking part by keeping only the allowed fields.
+ * In particular, ensures `thinking` is a string (not an object with cache_control).
+ */
+function sanitizeThinkingPart(part: Record<string, unknown>): Record<string, unknown> {
+  // Gemini-style thought blocks: { thought: true, text, thoughtSignature }
+  if (part.thought === true) {
+    const sanitized: Record<string, unknown> = { thought: true };
+
+    if (part.text !== undefined) {
+      // If text is wrapped, extract the inner string.
+      if (typeof part.text === "object" && part.text !== null) {
+        const maybeText = (part.text as any).text;
+        sanitized.text = typeof maybeText === "string" ? maybeText : part.text;
+      } else {
+        sanitized.text = part.text;
+      }
+    }
+
+    if (part.thoughtSignature !== undefined) sanitized.thoughtSignature = part.thoughtSignature;
+    return sanitized;
+  }
+
+  // Anthropic-style thinking blocks: { type: "thinking", thinking, signature }
+  if (part.type === "thinking" || part.thinking !== undefined) {
+    const sanitized: Record<string, unknown> = { type: "thinking" };
+
+    let thinkingContent: unknown = part.thinking ?? part.text;
+    if (thinkingContent !== undefined && typeof thinkingContent === "object" && thinkingContent !== null) {
+      const maybeText = (thinkingContent as any).text ?? (thinkingContent as any).thinking;
+      thinkingContent = typeof maybeText === "string" ? maybeText : "";
+    }
+
+    if (thinkingContent !== undefined) sanitized.thinking = thinkingContent;
+    if (part.signature !== undefined) sanitized.signature = part.signature;
+    return sanitized;
+  }
+
+  // Fallback: strip cache_control recursively.
+  return stripCacheControlRecursively(part) as Record<string, unknown>;
+}
+
+function filterContentArray(
+  contentArray: any[],
+  sessionId?: string,
+  getCachedSignatureFn?: (sessionId: string, text: string) => string | undefined,
+): any[] {
+  const filtered: any[] = [];
+
+  for (const item of contentArray) {
+    if (!item || typeof item !== "object") {
+      filtered.push(item);
+      continue;
+    }
+
+    if (!isThinkingPart(item)) {
+      filtered.push(item);
+      continue;
+    }
+
+    if (hasValidSignature(item)) {
+      filtered.push(sanitizeThinkingPart(item));
+      continue;
+    }
+
+    if (sessionId && getCachedSignatureFn) {
+      const text = getThinkingText(item);
+      if (text) {
+        const cachedSignature = getCachedSignatureFn(sessionId, text);
+        if (cachedSignature && cachedSignature.length >= 50) {
+          const restoredPart = { ...item };
+          if ((item as any).thought === true) {
+            (restoredPart as any).thoughtSignature = cachedSignature;
+          } else {
+            (restoredPart as any).signature = cachedSignature;
+          }
+          filtered.push(sanitizeThinkingPart(restoredPart as Record<string, unknown>));
+          continue;
+        }
+      }
+    }
+
+    // Drop unsigned/invalid thinking blocks.
+  }
+
+  return filtered;
 }
 
 /**
  * Filters out unsigned thinking blocks from contents (required by Claude API).
+ * Attempts to restore signatures from cache for thinking blocks that lack valid signatures.
+ * 
+ * @param contents - The contents array from the request
+ * @param sessionId - Optional session ID for signature cache lookup
+ * @param getCachedSignatureFn - Optional function to retrieve cached signatures
  */
-export function filterUnsignedThinkingBlocks(contents: any[]): any[] {
+export function filterUnsignedThinkingBlocks(
+  contents: any[],
+  sessionId?: string,
+  getCachedSignatureFn?: (sessionId: string, text: string) => string | undefined,
+): any[] {
   return contents.map((content: any) => {
-    if (!content || !Array.isArray(content.parts)) {
+    if (!content || typeof content !== "object") {
       return content;
     }
 
-    const filteredParts = content.parts.filter((part: any) => {
-      if (!part || typeof part !== "object") {
-        return true;
-      }
-      if (isThinkingPart(part)) {
-        return hasValidSignature(part);
-      }
-      return true;
-    });
+    // Gemini format: contents[].parts[]
+    if (Array.isArray((content as any).parts)) {
+      let filteredParts = filterContentArray((content as any).parts, sessionId, getCachedSignatureFn);
 
-    return { ...content, parts: filteredParts };
+      // Remove trailing thinking blocks for model role (assistant equivalent in Gemini)
+      if ((content as any).role === "model") {
+        filteredParts = removeTrailingThinkingBlocks(filteredParts);
+      }
+
+      return { ...content, parts: filteredParts };
+    }
+
+    // Some Anthropic-style payloads may appear here as contents[].content[]
+    if (Array.isArray((content as any).content)) {
+      let filteredContent = filterContentArray((content as any).content, sessionId, getCachedSignatureFn);
+
+      // Claude API requires assistant messages don't end with thinking blocks
+      if ((content as any).role === "assistant") {
+        filteredContent = removeTrailingThinkingBlocks(filteredContent);
+      }
+
+      return { ...content, content: filteredContent };
+    }
+
+    return content;
+  });
+}
+
+/**
+ * Filters thinking blocks from Anthropic-style messages[] payloads.
+ */
+export function filterMessagesThinkingBlocks(
+  messages: any[],
+  sessionId?: string,
+  getCachedSignatureFn?: (sessionId: string, text: string) => string | undefined,
+): any[] {
+  return messages.map((message: any) => {
+    if (!message || typeof message !== "object") {
+      return message;
+    }
+
+    if (Array.isArray((message as any).content)) {
+      let filteredContent = filterContentArray((message as any).content, sessionId, getCachedSignatureFn);
+
+      // Claude API requires assistant messages don't end with thinking blocks
+      if ((message as any).role === "assistant") {
+        filteredContent = removeTrailingThinkingBlocks(filteredContent);
+      }
+
+      return { ...message, content: filteredContent };
+    }
+
+    return message;
   });
 }
 

@@ -8,6 +8,8 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 - **Google OAuth sign-in** (multi-account via `opencode auth login`) with automatic token refresh
 - **Multi-account load balancing** Automatically cycle through multiple Google accounts to maximize rate limits
+- **Real-time SSE streaming** including thinking blocks and incremental output
+- **Advanced Claude support** Interleaved thinking, stable multi-turn signatures, and validated tool calling
 - **Automatic endpoint fallback** between Antigravity API endpoints (daily → autopush → prod)
 - **Antigravity API compatibility** for OpenAI-style requests
 - **Debug logging** for requests and responses
@@ -203,6 +205,29 @@ The `/connect` command in the TUI adds accounts non-destructively — it will ne
 
 - If Google revokes a refresh token (`invalid_grant`), that account is automatically removed from the pool
 - Rerun `opencode auth login` to re-add the account
+
+## Architecture & Flow
+
+For contributors and advanced users, see the detailed documentation:
+
+- **[Claude Model Flow](docs/CLAUDE_MODEL_FLOW.md)** - Full request/response flow, improvements, and fixes
+- **[Antigravity API Spec](docs/ANTIGRAVITY_API_SPEC.md)** - API reference and schema support matrix
+
+## Streaming & thinking
+
+This plugin supports **real-time SSE streaming**, meaning you see thinking blocks and text output incrementally as they are generated.
+
+### Claude Thinking & Tools
+
+For models like `claude-opus-4-5-thinking`:
+
+- **Interleaved Thinking:** The plugin automatically enables `anthropic-beta: interleaved-thinking-2025-05-14`. This allows Claude to think *between* tool calls and after tool results, improving complex reasoning.
+- **Smart System Hints:** A system instruction is silently added to encourage the model to "think" before and during tool use.
+- **Multi-turn Stability:** Thinking signatures are cached and restored using a stable `sessionId`, preventing "invalid signature" errors in long conversations.
+- **Thinking Budget Safety:** If a thinking budget is enabled, the plugin ensures output token limits are high enough to avoid budget-related errors.
+- **Tool Use:** Tool calls and responses are assigned proper IDs, and tool calling is set to validated mode for better Claude compatibility.
+
+**Troubleshooting:** If you see signature errors in multi-turn tool loops, restart `opencode` to reset the plugin session/signature cache.
 
 ## Debugging
 
