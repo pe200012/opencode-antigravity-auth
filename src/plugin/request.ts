@@ -743,6 +743,7 @@ export function prepareAntigravityRequest(
   projectId: string,
   endpointOverride?: string,
   headerStyle: HeaderStyle = "antigravity",
+  forceThinkingRecovery = false,
 ): {
   request: RequestInfo;
   init: RequestInit;
@@ -1066,18 +1067,37 @@ export function prepareAntigravityRequest(
                 required: ["reason"],
               });
 
-              if (!schema || typeof schema !== "object") {
+              if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
                 toolDebugMissing += 1;
                 return createPlaceholderSchema();
               }
 
               const cleaned = cleanJSONSchemaForAntigravity(schema);
 
-              if (
-                cleaned.type === "object" &&
-                (!cleaned.properties || Object.keys(cleaned.properties).length === 0)
-              ) {
-                return createPlaceholderSchema(cleaned);
+              if (!cleaned || typeof cleaned !== "object" || Array.isArray(cleaned)) {
+                toolDebugMissing += 1;
+                return createPlaceholderSchema();
+              }
+
+              // Claude VALIDATED mode requires tool parameters to be an object schema
+              // with at least one property.
+              const hasProperties =
+                cleaned.properties &&
+                typeof cleaned.properties === "object" &&
+                Object.keys(cleaned.properties).length > 0;
+
+              cleaned.type = "object";
+
+              if (!hasProperties) {
+                cleaned.properties = {
+                  reason: {
+                    type: "string",
+                    description: "Brief explanation of why you are calling this tool",
+                  },
+                };
+                cleaned.required = Array.isArray(cleaned.required)
+                  ? Array.from(new Set([...cleaned.required, "reason"]))
+                  : ["reason"];
               }
 
               return cleaned;
@@ -1349,15 +1369,20 @@ export function prepareAntigravityRequest(
         // - Context compaction stripped thinking blocks
         // - Signature cache miss
         // - Any other corruption we couldn't repair
+        // - API error indicated thinking_block_order issue (forceThinkingRecovery=true)
         //
         // The synthetic messages allow Claude to generate fresh thinking on the
         // new turn instead of failing with "Expected thinking but found text".
         if (isClaudeThinking && Array.isArray(requestPayload.contents)) {
           const conversationState = analyzeConversationState(requestPayload.contents);
 
-          if (needsThinkingRecovery(conversationState)) {
+          // Force recovery if API returned thinking_block_order error (retry case)
+          // or if proactive check detects we need recovery
+          if (forceThinkingRecovery || needsThinkingRecovery(conversationState)) {
             // Set message for toast notification (shown in plugin.ts, respects quiet mode)
-            thinkingRecoveryMessage = "Thinking recovery: restarting turn (corrupted context)";
+            thinkingRecoveryMessage = forceThinkingRecovery
+              ? "Thinking recovery: retrying with fresh turn (API error)"
+              : "Thinking recovery: restarting turn (corrupted context)";
 
             requestPayload.contents = closeToolLoopForThinking(requestPayload.contents);
 

@@ -527,9 +527,12 @@ function addEmptySchemaPlaceholder(schema: any): any {
   let result: any = { ...schema };
 
   // Check if this is an empty object schema
-  if (result.type === "object") {
-    const hasProperties = result.properties && 
-      typeof result.properties === "object" && 
+  const isObjectType = result.type === "object";
+
+  if (isObjectType) {
+    const hasProperties =
+      result.properties &&
+      typeof result.properties === "object" &&
       Object.keys(result.properties).length > 0;
 
     if (!hasProperties) {

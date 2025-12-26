@@ -824,6 +824,9 @@ export const createAntigravityPlugin = (providerId: string) => async (
             const accessToken = authRecord.access;
             if (!accessToken) {
               lastError = new Error("Missing access token");
+              if (accountCount <= 1) {
+                throw lastError;
+              }
               continue;
             }
 
@@ -946,6 +949,9 @@ export const createAntigravityPlugin = (providerId: string) => async (
               const currentHeaderStyle = headerStyles[currentHeaderStyleIndex]!;
               pushDebug(`headerStyle=${currentHeaderStyle}`);
             
+            // Flag to force thinking recovery on retry after API error
+            let forceThinkingRecovery = false;
+            
             for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; i++) {
               const currentEndpoint = ANTIGRAVITY_ENDPOINT_FALLBACKS[i];
 
@@ -957,6 +963,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   projectContext.effectiveProjectId,
                   currentEndpoint,
                   currentHeaderStyle,
+                  forceThinkingRecovery,
                 );
 
                 // Show thinking recovery toast (respects quiet mode)
@@ -1205,18 +1212,26 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   debugLines,
                 );
               } catch (error) {
-                // Handle recoverable thinking errors - strip thinking and return synthetic response
+                // Handle recoverable thinking errors - retry with forced recovery
                 if (error instanceof Error && error.message === "THINKING_RECOVERY_NEEDED") {
+                  // Only retry once with forced recovery to avoid infinite loops
+                  if (!forceThinkingRecovery) {
+                    pushDebug("thinking-recovery: API error detected, retrying with forced recovery");
+                    forceThinkingRecovery = true;
+                    i = -1; // Will become 0 after loop increment, restart endpoint loop
+                    continue;
+                  }
+                  
+                  // Already tried with forced recovery, give up and return error
                   const recoveryError = error as any;
                   const originalError = recoveryError.originalError || { error: { message: "Thinking recovery triggered" } };
                   
-                  // Return a synthetic error response that instructs the user to continue
-                  const recoveryMessage = `${originalError.error?.message || "Session recovered"}\n\n[RECOVERY] Thinking block corruption detected. Please send "continue" to resume.`;
+                  const recoveryMessage = `${originalError.error?.message || "Session recovery failed"}\n\n[RECOVERY] Thinking block corruption could not be resolved. Try starting a new session.`;
                   
                   return new Response(JSON.stringify({
                     type: "error",
                     error: {
-                      type: "recoverable_error",
+                      type: "unrecoverable_error",
                       message: recoveryMessage
                     }
                   }), {
@@ -1244,6 +1259,28 @@ export const createAntigravityPlugin = (providerId: string) => async (
             } // end headerStyleLoop
             
             if (shouldSwitchAccount) {
+              // Avoid tight retry loops when there's only one account.
+              if (accountCount <= 1) {
+                if (lastFailure) {
+                  return transformAntigravityResponse(
+                    lastFailure.response,
+                    lastFailure.streaming,
+                    lastFailure.debugContext,
+                    lastFailure.requestedModel,
+                    lastFailure.projectId,
+                    lastFailure.endpoint,
+                    lastFailure.effectiveModel,
+                    lastFailure.sessionId,
+                    lastFailure.toolDebugMissing,
+                    lastFailure.toolDebugSummary,
+                    lastFailure.toolDebugPayload,
+                    debugLines,
+                  );
+                }
+
+                throw lastError || new Error("All Antigravity endpoints failed");
+              }
+
               continue;
             }
 
