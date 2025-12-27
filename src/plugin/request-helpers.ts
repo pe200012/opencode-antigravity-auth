@@ -294,9 +294,69 @@ function scoreSchemaOption(schema: any): { score: number; typeName: string } {
 }
 
 /**
+ * Checks if an anyOf/oneOf array represents enum choices.
+ * Returns the merged enum values if so, otherwise null.
+ *
+ * Handles patterns like:
+ * - anyOf: [{ const: "a" }, { const: "b" }]
+ * - anyOf: [{ enum: ["a"] }, { enum: ["b"] }]
+ * - anyOf: [{ type: "string", const: "a" }, { type: "string", const: "b" }]
+ */
+function tryMergeEnumFromUnion(options: any[]): string[] | null {
+  if (!Array.isArray(options) || options.length === 0) {
+    return null;
+  }
+
+  const enumValues: string[] = [];
+
+  for (const option of options) {
+    if (!option || typeof option !== "object") {
+      return null;
+    }
+
+    // Check for const value
+    if (option.const !== undefined) {
+      enumValues.push(String(option.const));
+      continue;
+    }
+
+    // Check for single-value enum
+    if (Array.isArray(option.enum) && option.enum.length === 1) {
+      enumValues.push(String(option.enum[0]));
+      continue;
+    }
+
+    // Check for multi-value enum (merge all values)
+    if (Array.isArray(option.enum) && option.enum.length > 0) {
+      for (const val of option.enum) {
+        enumValues.push(String(val));
+      }
+      continue;
+    }
+
+    // If option has complex structure (properties, items, etc.), it's not a simple enum
+    if (option.properties || option.items || option.anyOf || option.oneOf || option.allOf) {
+      return null;
+    }
+
+    // If option has only type (no const/enum), it's not an enum pattern
+    if (option.type && !option.const && !option.enum) {
+      return null;
+    }
+  }
+
+  // Only return if we found actual enum values
+  return enumValues.length > 0 ? enumValues : null;
+}
+
+/**
  * Phase 2b: Flattens anyOf/oneOf to the best option with type hints.
  * { anyOf: [{ type: "string" }, { type: "number" }] }
  * → { type: "string", description: "(Accepts: string | number)" }
+ *
+ * Special handling for enum patterns:
+ * { anyOf: [{ const: "a" }, { const: "b" }] }
+ * → { type: "string", enum: ["a", "b"] }
  */
 function flattenAnyOfOneOf(schema: any): any {
   if (!schema || typeof schema !== "object") {
@@ -315,6 +375,25 @@ function flattenAnyOfOneOf(schema: any): any {
       const options = result[unionKey];
       const parentDesc = typeof result.description === "string" ? result.description : "";
 
+      // First, check if this is an enum pattern (anyOf with const/enum values)
+      // This is crucial for tools like WebFetch where format: anyOf[{const:"text"},{const:"markdown"},{const:"html"}]
+      const mergedEnum = tryMergeEnumFromUnion(options);
+      if (mergedEnum !== null) {
+        // This is an enum pattern - merge all values into a single enum
+        const { [unionKey]: _, ...rest } = result;
+        result = {
+          ...rest,
+          type: "string",
+          enum: mergedEnum,
+        };
+        // Preserve parent description
+        if (parentDesc) {
+          result.description = parentDesc;
+        }
+        continue;
+      }
+
+      // Not an enum pattern - use standard flattening logic
       // Score each option and find the best
       let bestIdx = 0;
       let bestScore = -1;
@@ -448,26 +527,33 @@ function flattenTypeArrays(schema: any, nullableFields?: Map<string, string[]>, 
 
 /**
  * Phase 3: Removes unsupported keywords after hints have been extracted.
+ *
+ * IMPORTANT: Only removes JSON Schema keywords at the schema level, NOT property names.
+ * For example, the JSON Schema `format` keyword (like `format: "email"`) should be removed,
+ * but a property named `format` inside `properties` should be preserved.
  */
-function removeUnsupportedKeywords(schema: any): any {
+function removeUnsupportedKeywords(schema: any, isInsideProperties = false): any {
   if (!schema || typeof schema !== "object") {
     return schema;
   }
 
   if (Array.isArray(schema)) {
-    return schema.map(item => removeUnsupportedKeywords(item));
+    return schema.map(item => removeUnsupportedKeywords(item, false));
   }
 
   const result: any = {};
   for (const [key, value] of Object.entries(schema)) {
-    // Skip unsupported keywords
-    if ((UNSUPPORTED_KEYWORDS as readonly string[]).includes(key)) {
+    // Skip unsupported keywords, BUT NOT if we're inside a "properties" object
+    // because those are property NAMES, not JSON Schema keywords
+    if (!isInsideProperties && (UNSUPPORTED_KEYWORDS as readonly string[]).includes(key)) {
       continue;
     }
 
     // Recursively process nested objects
+    // When processing "properties", mark that we're inside properties so child keys aren't filtered
     if (typeof value === "object" && value !== null) {
-      result[key] = removeUnsupportedKeywords(value);
+      const isProperties = key === "properties";
+      result[key] = removeUnsupportedKeywords(value, isProperties);
     } else {
       result[key] = value;
     }

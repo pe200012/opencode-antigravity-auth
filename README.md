@@ -43,7 +43,7 @@ If the agent only installs the plugin, ask it to also add models under `provider
 
    ```json
    {
-     "plugin": ["opencode-antigravity-auth@1.2.4"]
+     "plugin": ["opencode-antigravity-auth@1.2.6"]
    }
    ```
 
@@ -61,7 +61,7 @@ If the agent only installs the plugin, ask it to also add models under `provider
 
    ```json
    {
-     "plugin": ["opencode-antigravity-auth@1.2.4"],
+     "plugin": ["opencode-antigravity-auth@1.2.6"],
      "provider": {
        "google": {
          "models": {
@@ -111,14 +111,14 @@ mkdir -p ~/.config/opencode
 
 if [ -f ~/.config/opencode/opencode.json ]; then
     if command -v jq &> /dev/null; then
-        jq '.plugin = ((.plugin // []) + ["opencode-antigravity-auth@1.2.4"] | unique)' \
+        jq '.plugin = ((.plugin // []) + ["opencode-antigravity-auth@1.2.6"] | unique)' \
             ~/.config/opencode/opencode.json > /tmp/oc.json && \
             mv /tmp/oc.json ~/.config/opencode/opencode.json
     else
-        echo "Add \"opencode-antigravity-auth@1.2.4\" to the plugin array manually"
+        echo "Add \"opencode-antigravity-auth@1.2.6\" to the plugin array manually"
     fi
 else
-    echo '{"plugin":["opencode-antigravity-auth@1.2.4"]}' > ~/.config/opencode/opencode.json
+    echo '{"plugin":["opencode-antigravity-auth@1.2.6"]}' > ~/.config/opencode/opencode.json
 fi
 ```
 
@@ -207,7 +207,7 @@ Version 1.2.5 introduces significant reliability improvements for Claude models.
 
    ```json
    {
-     "plugin": ["opencode-antigravity-auth@1.2.5"]
+     "plugin": ["opencode-antigravity-auth@1.2.6"]
    }
    ```
 
