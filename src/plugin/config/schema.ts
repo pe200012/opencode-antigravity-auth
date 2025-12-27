@@ -196,6 +196,21 @@ export const AntigravityConfigSchema = z.object({
   proactive_refresh_check_interval_seconds: z.number().min(30).max(1800).default(300),
   
   // =========================================================================
+  // Rate Limiting
+  // =========================================================================
+  
+  /**
+   * Maximum time in seconds to wait when all accounts are rate-limited.
+   * If the minimum wait time across all accounts exceeds this threshold,
+   * the plugin fails fast with an error instead of hanging.
+   * 
+   * Set to 0 to disable (wait indefinitely).
+   * 
+   * @default 300 (5 minutes)
+   */
+  max_rate_limit_wait_seconds: z.number().min(0).max(3600).default(300),
+  
+  // =========================================================================
   // Auto-Update
   // =========================================================================
   
@@ -226,6 +241,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   proactive_token_refresh: true,
   proactive_refresh_buffer_seconds: 1800,
   proactive_refresh_check_interval_seconds: 300,
+  max_rate_limit_wait_seconds: 300,
   auto_update: true,
   signature_cache: {
     enabled: true,

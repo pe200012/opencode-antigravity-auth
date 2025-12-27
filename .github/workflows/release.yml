@@ -32,6 +32,13 @@ jobs:
           set -euo pipefail
           CURRENT_VERSION=$(node -p "require('./package.json').version")
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
+
+          # Abort if version contains beta/alpha/rc (prerelease identifiers)
+          if echo "$CURRENT_VERSION" | grep -qE '(beta|alpha|rc)'; then
+            echo "ERROR: Cannot publish prerelease version '$CURRENT_VERSION' as official release" >&2
+            echo "This is main branch - version should not contain beta/alpha/rc" >&2
+            exit 1
+          fi
           if git rev-parse HEAD^ >/dev/null 2>&1; then
             PREVIOUS_VERSION=$(node -e "const { execSync } = require('node:child_process'); try { const data = execSync('git show HEAD^:package.json', { stdio: ['ignore', 'pipe', 'ignore'] }); const json = JSON.parse(data.toString()); if (json && typeof json.version === 'string') { process.stdout.write(json.version); } } catch (error) {}")
             PREVIOUS_VERSION=${PREVIOUS_VERSION//$'\n'/}

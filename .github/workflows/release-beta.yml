@@ -1,9 +1,6 @@
 name: Release Beta
 
 on:
-  push:
-    branches:
-      - dev
   workflow_dispatch:
     inputs:
       force:
@@ -32,6 +29,17 @@ jobs:
           node-version: 20
           registry-url: https://registry.npmjs.org
           always-auth: true
+
+      - name: Verify not on main branch
+        run: |
+          set -euo pipefail
+          CURRENT_BRANCH="${GITHUB_REF#refs/heads/}"
+          if [ "$CURRENT_BRANCH" = "main" ]; then
+            echo "ERROR: Beta release workflow should not run on main branch" >&2
+            echo "This workflow is for dev branch only" >&2
+            exit 1
+          fi
+          echo "Running on branch: $CURRENT_BRANCH"
 
       - name: Determine and bump beta version
         id: determine

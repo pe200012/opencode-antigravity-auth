@@ -709,11 +709,10 @@ export const createAntigravityPlugin = (providerId: string) => async (
             const account = accountManager.getCurrentOrNextForFamily(family);
             
             if (!account) {
-              // All accounts are rate-limited - wait and retry
+              // All accounts are rate-limited
               const waitMs = accountManager.getMinWaitTimeForFamily(family) || 60_000;
-              const waitSec = Math.max(1, Math.ceil(waitMs / 1000));
 
-              pushDebug(`all-rate-limited family=${family} accounts=${accountCount}`);
+              pushDebug(`all-rate-limited family=${family} accounts=${accountCount} waitMs=${waitMs}`);
               if (isDebugEnabled()) {
                 logAccountContext("All accounts rate-limited", {
                   index: -1,
@@ -723,9 +722,28 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 logRateLimitSnapshot(family, accountManager.getAccountsSnapshot());
               }
 
+              // If wait time exceeds max threshold, return error immediately instead of hanging
+              // 0 means disabled (wait indefinitely)
+              const maxWaitMs = (config.max_rate_limit_wait_seconds ?? 300) * 1000;
+              if (maxWaitMs > 0 && waitMs > maxWaitMs) {
+                const waitTimeFormatted = formatWaitTime(waitMs);
+                await showToast(
+                  `Rate limited for ${waitTimeFormatted}. Try again later or add another account.`,
+                  "error"
+                );
+                
+                // Return a proper rate limit error response
+                throw new Error(
+                  `All ${accountCount} account(s) rate-limited for ${family}. ` +
+                  `Quota resets in ${waitTimeFormatted}. ` +
+                  `Add more accounts with \`opencode auth login\` or wait and retry.`
+                );
+              }
+
+              const waitSec = Math.max(1, Math.ceil(waitMs / 1000));
               await showToast(`All ${accountCount} account(s) rate-limited for ${family}. Waiting ${waitSec}s...`, "warning");
 
-              // Wait for the cooldown to expire
+              // Wait for the rate-limit cooldown to expire, then retry
               await sleep(waitMs, abortSignal);
               continue;
             }
