@@ -93,6 +93,8 @@ export interface ResolvedModel {
   tier?: ThinkingTier;
   /** Whether this is a thinking-capable model */
   isThinkingModel?: boolean;
-  /** Quota preference based on :antigravity suffix */
+  /** Quota preference based on :antigravity or :gemini-cli suffix */
   quotaPreference?: HeaderStyle;
+  /** Whether user explicitly specified quota via suffix (vs default selection) */
+  explicitQuota?: boolean;
 }

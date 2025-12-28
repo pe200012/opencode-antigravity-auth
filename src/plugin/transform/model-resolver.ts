@@ -153,6 +153,7 @@ export function resolveModelWithTier(requestedModel: string): ResolvedModel {
 
   const isAntigravityOnly = ANTIGRAVITY_ONLY_MODELS.test(modelWithoutQuota);
   const quotaPreference = isAntigravity || isAntigravityOnly ? "antigravity" : "gemini-cli";
+  const explicitQuota = isAntigravity;
 
   const isGemini3 = modelWithoutQuota.toLowerCase().startsWith("gemini-3");
   const skipAlias = isAntigravity && isGemini3;
@@ -171,9 +172,10 @@ export function resolveModelWithTier(requestedModel: string): ResolvedModel {
         thinkingLevel: "minimal",
         isThinkingModel: true,
         quotaPreference,
+        explicitQuota,
       };
     }
-    return { actualModel: resolvedModel, isThinkingModel: isThinking, quotaPreference };
+    return { actualModel: resolvedModel, isThinkingModel: isThinking, quotaPreference, explicitQuota };
   }
 
   if (resolvedModel.includes("gemini-3") && !skipAlias) {
@@ -183,6 +185,7 @@ export function resolveModelWithTier(requestedModel: string): ResolvedModel {
       tier,
       isThinkingModel: true,
       quotaPreference,
+      explicitQuota,
     };
   }
 
@@ -192,6 +195,7 @@ export function resolveModelWithTier(requestedModel: string): ResolvedModel {
       tier,
       isThinkingModel: true,
       quotaPreference,
+      explicitQuota,
     };
   }
 
@@ -205,6 +209,7 @@ export function resolveModelWithTier(requestedModel: string): ResolvedModel {
     tier,
     isThinkingModel: isThinking,
     quotaPreference,
+    explicitQuota,
   };
 }
 

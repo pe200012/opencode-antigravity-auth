@@ -419,24 +419,100 @@ function formatWaitTime(ms: number): string {
 
 const SHORT_RETRY_THRESHOLD_MS = 5000;
 
-const rateLimitStateByAccount = new Map<number, { consecutive429: number; lastAt: number }>();
+/**
+ * Rate limit state tracking with time-window deduplication.
+ * 
+ * Problem: When multiple subagents hit 429 simultaneously, each would increment
+ * the consecutive counter, causing incorrect exponential backoff (5 concurrent
+ * 429s = 2^5 backoff instead of 2^1).
+ * 
+ * Solution: Track per account+quota with deduplication window. Multiple 429s
+ * within RATE_LIMIT_DEDUP_WINDOW_MS are treated as a single event.
+ */
+const RATE_LIMIT_DEDUP_WINDOW_MS = 2000; // 2 seconds - concurrent requests within this window are deduplicated
+const RATE_LIMIT_STATE_RESET_MS = 120_000; // Reset consecutive counter after 2 minutes of no 429s
+
+interface RateLimitState {
+  consecutive429: number;
+  lastAt: number;
+  quotaKey: string; // Track which quota this state is for
+}
+
+// Key format: `${accountIndex}:${quotaKey}` for per-account-per-quota tracking
+const rateLimitStateByAccountQuota = new Map<string, RateLimitState>();
 
 // Track empty response retry attempts (ported from LLM-API-Key-Proxy)
 const emptyResponseAttempts = new Map<string, number>();
 
-function getRateLimitBackoff(accountIndex: number, serverRetryAfterMs: number | null): { attempt: number; delayMs: number } {
+/**
+ * Get rate limit backoff with time-window deduplication.
+ * 
+ * @param accountIndex - The account index
+ * @param quotaKey - The quota key (e.g., "gemini-cli", "gemini-antigravity", "claude")
+ * @param serverRetryAfterMs - Server-provided retry delay (if any)
+ * @returns { attempt, delayMs, isDuplicate } - isDuplicate=true if within dedup window
+ */
+function getRateLimitBackoff(
+  accountIndex: number, 
+  quotaKey: string,
+  serverRetryAfterMs: number | null
+): { attempt: number; delayMs: number; isDuplicate: boolean } {
   const now = Date.now();
-  const previous = rateLimitStateByAccount.get(accountIndex);
-  const attempt = previous && (now - previous.lastAt < 120_000) ? previous.consecutive429 + 1 : 1;
-  rateLimitStateByAccount.set(accountIndex, { consecutive429: attempt, lastAt: now });
+  const stateKey = `${accountIndex}:${quotaKey}`;
+  const previous = rateLimitStateByAccountQuota.get(stateKey);
+  
+  // Check if this is a duplicate 429 within the dedup window
+  if (previous && (now - previous.lastAt < RATE_LIMIT_DEDUP_WINDOW_MS)) {
+    // Same rate limit event from concurrent request - don't increment
+    const baseDelay = serverRetryAfterMs ?? 1000;
+    const backoffDelay = Math.min(baseDelay * Math.pow(2, previous.consecutive429 - 1), 60_000);
+    return { 
+      attempt: previous.consecutive429, 
+      delayMs: Math.max(baseDelay, backoffDelay),
+      isDuplicate: true 
+    };
+  }
+  
+  // Check if we should reset (no 429 for 2 minutes) or increment
+  const attempt = previous && (now - previous.lastAt < RATE_LIMIT_STATE_RESET_MS) 
+    ? previous.consecutive429 + 1 
+    : 1;
+  
+  rateLimitStateByAccountQuota.set(stateKey, { 
+    consecutive429: attempt, 
+    lastAt: now,
+    quotaKey 
+  });
   
   const baseDelay = serverRetryAfterMs ?? 1000;
   const backoffDelay = Math.min(baseDelay * Math.pow(2, attempt - 1), 60_000);
-  return { attempt, delayMs: Math.max(baseDelay, backoffDelay) };
+  return { attempt, delayMs: Math.max(baseDelay, backoffDelay), isDuplicate: false };
 }
 
-function resetRateLimitState(accountIndex: number): void {
-  rateLimitStateByAccount.delete(accountIndex);
+/**
+ * Reset rate limit state for an account+quota combination.
+ * Only resets the specific quota, not all quotas for the account.
+ */
+function resetRateLimitState(accountIndex: number, quotaKey: string): void {
+  const stateKey = `${accountIndex}:${quotaKey}`;
+  rateLimitStateByAccountQuota.delete(stateKey);
+}
+
+/**
+ * Reset all rate limit state for an account (all quotas).
+ * Used when account is completely healthy.
+ */
+function resetAllRateLimitStateForAccount(accountIndex: number): void {
+  for (const key of rateLimitStateByAccountQuota.keys()) {
+    if (key.startsWith(`${accountIndex}:`)) {
+      rateLimitStateByAccountQuota.delete(key);
+    }
+  }
+}
+
+function headerStyleToQuotaKey(headerStyle: HeaderStyle, family: ModelFamily): string {
+  if (family === "claude") return "claude";
+  return headerStyle === "antigravity" ? "gemini-antigravity" : "gemini-cli";
 }
 
 // Track consecutive non-429 failures per account to prevent infinite loops
@@ -812,7 +888,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   const { failures, shouldCooldown, cooldownMs } = trackAccountFailure(account.index);
                   lastError = new Error("Antigravity token refresh failed");
                   if (shouldCooldown) {
-                    accountManager.markRateLimited(account, cooldownMs, family, "antigravity");
+                    accountManager.markAccountCoolingDown(account, cooldownMs, "auth-failure");
                     pushDebug(`token-refresh-failed: cooldown ${cooldownMs}ms after ${failures} failures`);
                   }
                   continue;
@@ -859,7 +935,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 const { failures, shouldCooldown, cooldownMs } = trackAccountFailure(account.index);
                 lastError = error instanceof Error ? error : new Error(String(error));
                 if (shouldCooldown) {
-                  accountManager.markRateLimited(account, cooldownMs, family, "antigravity");
+                  accountManager.markAccountCoolingDown(account, cooldownMs, "auth-failure");
                   pushDebug(`token-refresh-error: cooldown ${cooldownMs}ms after ${failures} failures`);
                 }
                 continue;
@@ -883,7 +959,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
               const { failures, shouldCooldown, cooldownMs } = trackAccountFailure(account.index);
               lastError = error instanceof Error ? error : new Error(String(error));
               if (shouldCooldown) {
-                accountManager.markRateLimited(account, cooldownMs, family, "antigravity");
+                accountManager.markAccountCoolingDown(account, cooldownMs, "project-error");
                 pushDebug(`project-context-error: cooldown ${cooldownMs}ms after ${failures} failures`);
               }
               continue;
@@ -971,12 +1047,32 @@ export const createAntigravityPlugin = (providerId: string) => async (
             // - Models with :antigravity suffix -> use Antigravity quota
             // - Models without suffix (default) -> use Gemini CLI quota
             // - Claude models -> always use Antigravity
-            const headerStyle = getHeaderStyleFromUrl(urlString, family);
-            pushDebug(`headerStyle=${headerStyle} (from model suffix)`);
+            let headerStyle = getHeaderStyleFromUrl(urlString, family);
+            const explicitQuota = isExplicitQuotaFromUrl(urlString);
+            pushDebug(`headerStyle=${headerStyle} explicit=${explicitQuota}`);
             
             // Check if this header style is rate-limited for this account
             if (accountManager.isRateLimitedForHeaderStyle(account, family, headerStyle)) {
-              shouldSwitchAccount = true;
+              // Quota fallback: try alternate quota on same account (if enabled and not explicit)
+              if (config.quota_fallback && !explicitQuota && family === "gemini") {
+                const alternateStyle = accountManager.getAvailableHeaderStyle(account, family);
+                if (alternateStyle && alternateStyle !== headerStyle) {
+                  const quotaName = headerStyle === "gemini-cli" ? "Gemini CLI" : "Antigravity";
+                  const altQuotaName = alternateStyle === "gemini-cli" ? "Gemini CLI" : "Antigravity";
+                  if (!quietMode) {
+                    await showToast(
+                      `${quotaName} quota exhausted, using ${altQuotaName} quota`,
+                      "warning"
+                    );
+                  }
+                  headerStyle = alternateStyle;
+                  pushDebug(`quota fallback: ${headerStyle}`);
+                } else {
+                  shouldSwitchAccount = true;
+                }
+              } else {
+                shouldSwitchAccount = true;
+              }
             }
             
             while (!shouldSwitchAccount) {
@@ -1031,7 +1127,8 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   const headerRetryMs = retryAfterMsFromResponse(response);
                   const bodyInfo = await extractRetryInfoFromBody(response);
                   const serverRetryMs = bodyInfo.retryDelayMs ?? headerRetryMs;
-                  const { attempt, delayMs } = getRateLimitBackoff(account.index, serverRetryMs);
+                  const quotaKey = headerStyleToQuotaKey(headerStyle, family);
+                  const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey, serverRetryMs);
 
                   const waitTimeFormatted = formatWaitTime(delayMs);
                   const isCapacityExhausted =
@@ -1142,8 +1239,9 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   }
                 }
 
-                // Success - reset rate limit backoff state
-                resetRateLimitState(account.index);
+                // Success - reset rate limit backoff state for this quota
+                const quotaKey = headerStyleToQuotaKey(headerStyle, family);
+                resetRateLimitState(account.index, quotaKey);
                 resetAccountFailureState(account.index);
 
                 const shouldRetryEndpoint = (
@@ -1179,6 +1277,26 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 });
                 if (!response.ok) {
                   await logResponseBody(debugContext, response, response.status);
+                  
+                  // Handle 400 "Prompt too long" with helpful toast
+                  if (response.status === 400) {
+                    const cloned = response.clone();
+                    const bodyText = await cloned.text();
+                    if (bodyText.includes("Prompt is too long") || bodyText.includes("prompt_too_long")) {
+                      if (!quietMode) {
+                        await showToast(
+                          "Context too long - use /compact to reduce size",
+                          "warning"
+                        );
+                      }
+                      // Return new response since we consumed the body
+                      return new Response(bodyText, {
+                        status: 400,
+                        statusText: response.statusText,
+                        headers: response.headers,
+                      });
+                    }
+                  }
                 }
                 
                 // Empty response retry logic (ported from LLM-API-Key-Proxy)
@@ -1293,7 +1411,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 const { failures, shouldCooldown, cooldownMs } = trackAccountFailure(account.index);
                 lastError = error instanceof Error ? error : new Error(String(error));
                 if (shouldCooldown) {
-                  accountManager.markRateLimited(account, cooldownMs, family, headerStyle);
+                  accountManager.markAccountCoolingDown(account, cooldownMs, "network-error");
                   pushDebug(`endpoint-error: cooldown ${cooldownMs}ms after ${failures} failures`);
                 }
                 shouldSwitchAccount = true;
@@ -1733,4 +1851,13 @@ function getHeaderStyleFromUrl(urlString: string, family: ModelFamily): HeaderSt
   }
   const { quotaPreference } = resolveModelWithTier(modelWithSuffix);
   return quotaPreference ?? "gemini-cli";
+}
+
+function isExplicitQuotaFromUrl(urlString: string): boolean {
+  const modelWithSuffix = extractModelFromUrlWithSuffix(urlString);
+  if (!modelWithSuffix) {
+    return false;
+  }
+  const { explicitQuota } = resolveModelWithTier(modelWithSuffix);
+  return explicitQuota ?? false;
 }

@@ -1,8 +1,8 @@
 import { formatRefreshParts, parseRefreshParts } from "./auth";
-import { loadAccounts, saveAccounts, type AccountStorageV3, type RateLimitStateV3, type ModelFamily, type HeaderStyle } from "./storage";
+import { loadAccounts, saveAccounts, type AccountStorageV3, type RateLimitStateV3, type ModelFamily, type HeaderStyle, type CooldownReason } from "./storage";
 import type { OAuthAuthDetails, RefreshParts } from "./types";
 
-export type { ModelFamily, HeaderStyle } from "./storage";
+export type { ModelFamily, HeaderStyle, CooldownReason } from "./storage";
 
 export type QuotaKey = "claude" | "gemini-antigravity" | "gemini-cli";
 
@@ -16,6 +16,8 @@ export interface ManagedAccount {
   expires?: number;
   rateLimitResetTimes: RateLimitStateV3;
   lastSwitchReason?: "rate-limit" | "initial" | "rotation";
+  coolingDownUntil?: number;
+  cooldownReason?: CooldownReason;
 }
 
 function nowMs(): number {
@@ -202,7 +204,7 @@ export class AccountManager {
     const current = this.getCurrentAccountForFamily(family);
     if (current) {
       clearExpiredRateLimits(current);
-      if (!isRateLimitedForFamily(current, family)) {
+      if (!isRateLimitedForFamily(current, family) && !this.isAccountCoolingDown(current)) {
         current.lastUsed = nowMs();
         return current;
       }
@@ -218,7 +220,7 @@ export class AccountManager {
   getNextForFamily(family: ModelFamily): ManagedAccount | null {
     const available = this.accounts.filter((a) => {
       clearExpiredRateLimits(a);
-      return !isRateLimitedForFamily(a, family);
+      return !isRateLimitedForFamily(a, family) && !this.isAccountCoolingDown(a);
     });
 
     if (available.length === 0) {
@@ -238,6 +240,31 @@ export class AccountManager {
   markRateLimited(account: ManagedAccount, retryAfterMs: number, family: ModelFamily, headerStyle: HeaderStyle = "antigravity"): void {
     const key = getQuotaKey(family, headerStyle);
     account.rateLimitResetTimes[key] = nowMs() + retryAfterMs;
+  }
+
+  markAccountCoolingDown(account: ManagedAccount, cooldownMs: number, reason: CooldownReason): void {
+    account.coolingDownUntil = nowMs() + cooldownMs;
+    account.cooldownReason = reason;
+  }
+
+  isAccountCoolingDown(account: ManagedAccount): boolean {
+    if (account.coolingDownUntil === undefined) {
+      return false;
+    }
+    if (nowMs() >= account.coolingDownUntil) {
+      this.clearAccountCooldown(account);
+      return false;
+    }
+    return true;
+  }
+
+  clearAccountCooldown(account: ManagedAccount): void {
+    delete account.coolingDownUntil;
+    delete account.cooldownReason;
+  }
+
+  getAccountCooldownReason(account: ManagedAccount): CooldownReason | undefined {
+    return this.isAccountCoolingDown(account) ? account.cooldownReason : undefined;
   }
 
   isRateLimitedForHeaderStyle(account: ManagedAccount, family: ModelFamily, headerStyle: HeaderStyle): boolean {

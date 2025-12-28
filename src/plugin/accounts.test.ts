@@ -531,4 +531,104 @@ describe("AccountManager", () => {
       expect(manager.getCurrentAccountForFamily("gemini")?.parts.refreshToken).toBe("r2");
     });
   });
+
+  describe("account cooldown (non-429 errors)", () => {
+    it("marks account as cooling down with reason", () => {
+      const stored: AccountStorageV3 = {
+        version: 3,
+        accounts: [
+          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account = manager.getCurrentOrNextForFamily("claude");
+
+      manager.markAccountCoolingDown(account!, 30000, "auth-failure");
+
+      expect(manager.isAccountCoolingDown(account!)).toBe(true);
+    });
+
+    it("cooldown expires after duration", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(0));
+
+      const stored: AccountStorageV3 = {
+        version: 3,
+        accounts: [
+          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account = manager.getCurrentOrNextForFamily("claude");
+
+      manager.markAccountCoolingDown(account!, 30000, "network-error");
+
+      expect(manager.isAccountCoolingDown(account!)).toBe(true);
+
+      vi.setSystemTime(new Date(35000));
+
+      expect(manager.isAccountCoolingDown(account!)).toBe(false);
+    });
+
+    it("clearAccountCooldown removes cooldown state", () => {
+      const stored: AccountStorageV3 = {
+        version: 3,
+        accounts: [
+          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account = manager.getCurrentOrNextForFamily("claude");
+
+      manager.markAccountCoolingDown(account!, 30000, "auth-failure");
+      expect(manager.isAccountCoolingDown(account!)).toBe(true);
+
+      manager.clearAccountCooldown(account!);
+      expect(manager.isAccountCoolingDown(account!)).toBe(false);
+    });
+
+    it("cooling down account is skipped in getCurrentOrNextForFamily", () => {
+      const stored: AccountStorageV3 = {
+        version: 3,
+        accounts: [
+          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account1 = manager.getCurrentOrNextForFamily("claude");
+
+      manager.markAccountCoolingDown(account1!, 30000, "project-error");
+
+      const next = manager.getCurrentOrNextForFamily("claude");
+      expect(next?.parts.refreshToken).toBe("r2");
+    });
+
+    it("cooldown is independent from rate limits", () => {
+      const stored: AccountStorageV3 = {
+        version: 3,
+        accounts: [
+          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const account = manager.getCurrentOrNextForFamily("gemini");
+
+      manager.markAccountCoolingDown(account!, 30000, "auth-failure");
+
+      expect(manager.isAccountCoolingDown(account!)).toBe(true);
+      expect(manager.isRateLimitedForHeaderStyle(account!, "gemini", "antigravity")).toBe(false);
+      expect(manager.isRateLimitedForHeaderStyle(account!, "gemini", "gemini-cli")).toBe(false);
+    });
+  });
 });

@@ -55,6 +55,8 @@ export interface AccountStorage {
   activeIndex: number;
 }
 
+export type CooldownReason = "auth-failure" | "network-error" | "project-error";
+
 export interface AccountMetadataV3 {
   email?: string;
   refreshToken: string;
@@ -64,6 +66,8 @@ export interface AccountMetadataV3 {
   lastUsed: number;
   lastSwitchReason?: "rate-limit" | "initial" | "rotation";
   rateLimitResetTimes?: RateLimitStateV3;
+  coolingDownUntil?: number;
+  cooldownReason?: CooldownReason;
 }
 
 export interface AccountStorageV3 {
