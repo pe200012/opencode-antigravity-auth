@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { AccountManager } from "./accounts";
 import type { OAuthAuthDetails } from "./types";
+import { getPublicModelName } from "./transform/model-resolver";
 
 describe("Model-specific Gemini quota", () => {
   let manager: AccountManager;
@@ -92,5 +93,14 @@ describe("Model-specific Gemini quota", () => {
     // All Gemini models should now be blocked for antigravity on this account
     expect(manager.isRateLimitedForHeaderStyle(account, "gemini", "antigravity", modelPro)).toBe(true);
     expect(manager.isRateLimitedForHeaderStyle(account, "gemini", "antigravity", "gemini-1.5-flash")).toBe(true);
+  });
+
+  it("getPublicModelName correctly maps Antigravity models to CLI aliases", () => {
+    expect(getPublicModelName("gemini-3-pro")).toBe("gemini-3-pro-preview");
+    expect(getPublicModelName("gemini-3-pro-high")).toBe("gemini-3-pro-preview");
+    expect(getPublicModelName("gemini-3-flash")).toBe("gemini-3-flash-preview");
+    expect(getPublicModelName("gemini-2.5-pro")).toBe("gemini-2.5-pro");
+    expect(getPublicModelName("gemini-2.5-flash")).toBe("gemini-2.5-flash");
+    expect(getPublicModelName("custom-model")).toBe("custom-model");
   });
 });
