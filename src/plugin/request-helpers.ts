@@ -774,6 +774,47 @@ export function extractThinkingConfig(
 }
 
 /**
+ * Extracts variant thinking config from OpenCode's providerOptions.
+ * Supports Google, Anthropic, and OpenRouter formats.
+ */
+export function extractVariantThinkingConfig(
+  providerOptions: Record<string, unknown> | undefined
+): { thinkingBudget?: number } | undefined {
+  if (!providerOptions) return undefined;
+
+  // Google format: { google: { thinkingConfig: { thinkingBudget } } }
+  const google = providerOptions.google as Record<string, unknown> | undefined;
+  if (google?.thinkingConfig && typeof google.thinkingConfig === "object") {
+    const tc = google.thinkingConfig as Record<string, unknown>;
+    if (typeof tc.thinkingBudget === "number") {
+      return { thinkingBudget: tc.thinkingBudget };
+    }
+  }
+
+  // Anthropic format: { anthropic: { thinking: { type: "enabled", budgetTokens } } }
+  const anthropic = providerOptions.anthropic as Record<string, unknown> | undefined;
+  if (anthropic?.thinking && typeof anthropic.thinking === "object") {
+    const thinking = anthropic.thinking as Record<string, unknown>;
+    if (typeof thinking.budgetTokens === "number") {
+      return { thinkingBudget: thinking.budgetTokens };
+    }
+  }
+
+  // OpenRouter format: { openrouter: { reasoning: { effort } } }
+  const openrouter = providerOptions.openrouter as Record<string, unknown> | undefined;
+  if (openrouter?.reasoning && typeof openrouter.reasoning === "object") {
+    const reasoning = openrouter.reasoning as Record<string, unknown>;
+    if (typeof reasoning.effort === "string") {
+      const effortMap: Record<string, number> = { low: 8192, medium: 16384, high: 32768 };
+      const budget = effortMap[reasoning.effort];
+      if (budget) return { thinkingBudget: budget };
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Determines the final thinking configuration based on model capabilities and user settings.
  * For Claude thinking models, we keep thinking enabled even in multi-turn conversations.
  * The filterUnsignedThinkingBlocks function will handle signature validation/restoration.

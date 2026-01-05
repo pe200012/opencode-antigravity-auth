@@ -27,6 +27,7 @@ import {
   DEFAULT_THINKING_BUDGET,
   deepFilterThinkingBlocks,
   extractThinkingConfig,
+  extractVariantThinkingConfig,
   extractUsageFromSsePayload,
   extractUsageMetadata,
   fixToolResponseGrouping,
@@ -54,6 +55,7 @@ import {
 import { sanitizeCrossModelPayloadInPlace } from "./transform/cross-model-sanitizer";
 import {
   resolveModelWithTier,
+  resolveModelWithVariant,
   isClaudeModel,
   isClaudeThinkingModel,
   CLAUDE_THINKING_MAX_OUTPUT_TOKENS,
