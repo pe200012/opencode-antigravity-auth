@@ -1713,34 +1713,7 @@ describe("deduplicateThinkingText", () => {
     expect(result.candidates[0].content.parts[2].functionCall.name).toBe("test");
   });
 
-  it("skips already-displayed thinking when displayedHashes is provided", () => {
-    const buffer = createTestBuffer();
-    const displayedHashes = new Set<string>();
-    
-    const chunk1 = {
-      candidates: [{
-        content: {
-          parts: [{ thought: true, text: "Same thinking content" }],
-        },
-      }],
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result1 = deduplicateThinkingText(chunk1, buffer, displayedHashes) as any;
-    expect(result1.candidates[0].content.parts[0].text).toBe("Same thinking content");
-    expect(displayedHashes.size).toBe(1);
-    
-    const buffer2 = createTestBuffer();
-    const chunk2 = {
-      candidates: [{
-        content: {
-          parts: [{ thought: true, text: "Same thinking content" }],
-        },
-      }],
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result2 = deduplicateThinkingText(chunk2, buffer2, displayedHashes) as any;
-    expect(result2.candidates[0].content.parts.length).toBe(0);
-  });
+
 });
 
 describe("recursivelyParseJsonStrings", () => {

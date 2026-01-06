@@ -68,17 +68,6 @@ const PLUGIN_SESSION_ID = `-${crypto.randomUUID()}`;
 
 const MIN_SIGNATURE_LENGTH = 50;
 
-const displayedThinkingHashesBySession = new Map<string, Set<string>>();
-
-function getDisplayedThinkingHashes(sessionKey: string): Set<string> {
-  let hashes = displayedThinkingHashesBySession.get(sessionKey);
-  if (!hashes) {
-    hashes = new Set<string>();
-    displayedThinkingHashesBySession.set(sessionKey, hashes);
-  }
-  return hashes;
-}
-
 function buildSignatureSessionKey(
   sessionId: string,
   model?: string,
@@ -1476,7 +1465,6 @@ export async function transformAntigravityResponse(
         signatureSessionKey: sessionId,
         debugText,
         cacheSignatures,
-        displayedThinkingHashes: sessionId ? getDisplayedThinkingHashes(sessionId) : undefined,
       },
     );
     return new Response(response.body.pipeThrough(streamingTransformer), {

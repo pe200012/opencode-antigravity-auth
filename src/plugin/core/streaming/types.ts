@@ -20,7 +20,6 @@ export interface StreamingOptions {
   signatureSessionKey?: string;
   debugText?: string;
   cacheSignatures?: boolean;
-  displayedThinkingHashes?: Set<string>;
 }
 
 export interface ThoughtBuffer {

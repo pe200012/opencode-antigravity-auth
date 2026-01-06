@@ -5,16 +5,6 @@ import type {
   ThoughtBuffer,
 } from './types';
 
-function simpleHash(text: string): string {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    const char = text.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return hash.toString(36);
-}
-
 export function createThoughtBuffer(): ThoughtBuffer {
   const buffer = new Map<number, string>();
   return {
@@ -55,7 +45,6 @@ export function transformStreamingPayload(
 export function deduplicateThinkingText(
   response: unknown,
   sentBuffer: ThoughtBuffer,
-  displayedHashes?: Set<string>,
 ): unknown {
   if (!response || typeof response !== 'object') return response;
 
@@ -73,15 +62,6 @@ export function deduplicateThinkingText(
         const p = part as Record<string, unknown>;
         if (p.thought === true || p.type === 'thinking') {
           const fullText = (p.text || p.thinking || '') as string;
-          
-          if (displayedHashes) {
-            const hash = simpleHash(fullText);
-            if (displayedHashes.has(hash)) {
-              return null;
-            }
-            displayedHashes.add(hash);
-          }
-          
           const sentText = sentBuffer.get(index) ?? '';
 
           if (fullText.startsWith(sentText)) {
@@ -117,16 +97,6 @@ export function deduplicateThinkingText(
       const b = block as Record<string, unknown> | null;
       if (b?.type === 'thinking') {
         const fullText = (b.thinking || b.text || '') as string;
-        
-        if (displayedHashes) {
-          const hash = simpleHash(fullText);
-          if (displayedHashes.has(hash)) {
-            thinkingIndex++;
-            return null;
-          }
-          displayedHashes.add(hash);
-        }
-        
         const sentText = sentBuffer.get(thinkingIndex) ?? '';
 
         if (fullText.startsWith(sentText)) {
@@ -184,7 +154,7 @@ export function transformSseLine(
         );
       }
 
-      let response: unknown = deduplicateThinkingText(parsed.response, sentThinkingBuffer, options.displayedThinkingHashes);
+      let response: unknown = deduplicateThinkingText(parsed.response, sentThinkingBuffer);
 
       if (options.debugText && callbacks.onInjectDebug && !debugState.injected) {
         response = callbacks.onInjectDebug(response, options.debugText);
