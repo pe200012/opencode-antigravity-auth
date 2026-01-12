@@ -1089,7 +1089,6 @@ export function prepareAntigravityRequest(
                   },
                 },
                 required: [EMPTY_SCHEMA_PLACEHOLDER_NAME],
-                additionalProperties: false,
               };
 
               let schema: any = schemaCandidates[0];
@@ -1141,13 +1140,26 @@ export function prepareAntigravityRequest(
               return newTool;
             });
 
-            // Gemini 3 API requires: [{functionDeclarations: [{name, description, parameters}, ...]}]
             const normalizedTools = requestPayload.tools as any[];
-            const geminiDeclarations = normalizedTools.map((tool: any) => ({
-              name: tool.name || tool.function?.name,
-              description: tool.description || tool.function?.description,
-              parameters: tool.parameters || tool.input_schema || tool.function?.parameters || tool.function?.input_schema,
-            }));
+            const geminiPlaceholderSchema = {
+              type: "object",
+              properties: {
+                [EMPTY_SCHEMA_PLACEHOLDER_NAME]: {
+                  type: "boolean",
+                  description: EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
+                },
+              },
+              required: [EMPTY_SCHEMA_PLACEHOLDER_NAME],
+            };
+            const geminiDeclarations = normalizedTools.map((tool: any) => {
+              const rawSchema = tool.parameters || tool.input_schema || tool.function?.parameters || tool.function?.input_schema;
+              const cleanedSchema = rawSchema ? cleanJSONSchemaForAntigravity(rawSchema) : geminiPlaceholderSchema;
+              return {
+                name: tool.name || tool.function?.name,
+                description: tool.description || tool.function?.description,
+                parameters: cleanedSchema,
+              };
+            });
             requestPayload.tools = [{ functionDeclarations: geminiDeclarations }];
           }
 

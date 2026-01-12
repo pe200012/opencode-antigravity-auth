@@ -228,7 +228,6 @@ export function normalizeGeminiTools(
       }
     }
     
-    // Ensure custom has input_schema
     if (newTool.custom && !(newTool.custom as Record<string, unknown>).input_schema) {
       (newTool.custom as Record<string, unknown>).input_schema = { 
         type: "OBJECT", 
