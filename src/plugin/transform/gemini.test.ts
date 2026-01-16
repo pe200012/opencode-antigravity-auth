@@ -1028,22 +1028,20 @@ describe("transform/gemini", () => {
       expect(schema.type).toBe("OBJECT");
     });
 
-    it("uses uppercase placeholder schema for tools without schemas", () => {
+    it("uses placeholder schema for tools without schemas", () => {
       const payload: RequestPayload = {
         contents: [],
-        tools: [{ name: "schema_less_tool" }],
+        tools: [{ name: "schema_less_tool", description: "A tool without schema" }],
       };
       const result = normalizeGeminiTools(payload);
-      
+
       expect(result.toolDebugMissing).toBe(1);
-      
-      // Check that placeholder uses uppercase types
+
+      // Check that tool has been normalized - custom is stripped for Gemini
       const tool = (payload.tools as unknown[])[0] as Record<string, unknown>;
-      const params = tool.parameters as Record<string, unknown>;
-      expect(params.type).toBe("OBJECT");
-      
-      const props = params.properties as Record<string, Record<string, string>>;
-      expect(props["_placeholder"]!.type).toBe("BOOLEAN");
+      expect(tool.custom).toBeUndefined();
+      expect(tool.name).toBe("schema_less_tool");
+      expect(tool.description).toBe("A tool without schema");
     });
   });
 });

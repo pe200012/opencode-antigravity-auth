@@ -278,10 +278,6 @@ export function normalizeGeminiTools(
         description: newTool.description,
         input_schema: schema,
       };
-
-      if (!newTool.parameters && !newTool.input_schema && !newTool.inputSchema) {
-        newTool.parameters = schema;
-      }
     }
     
     if (newTool.custom && !(newTool.custom as Record<string, unknown>).input_schema) {
@@ -300,6 +296,11 @@ export function normalizeGeminiTools(
     if (newTool.custom) {
       delete newTool.custom;
     }
+
+    // Remove unsupported 'parameters' field - Gemini API only accepts function.input_schema
+    delete newTool.parameters;
+    delete newTool.input_schema;
+    delete newTool.inputSchema;
 
     return newTool;
   });
