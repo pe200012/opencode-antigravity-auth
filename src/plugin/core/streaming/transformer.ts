@@ -49,7 +49,7 @@ export function transformStreamingPayload(
             : parsed.response;
           return `data: ${JSON.stringify(transformed)}`;
         }
-      } catch (_) {}
+      } catch (_) { }
       return line;
     })
     .join('\n');
@@ -74,7 +74,7 @@ export function deduplicateThinkingText(
 
       const newParts = content.parts.map((part: unknown) => {
         const p = part as Record<string, unknown>;
-        
+
         // Handle image data - save to disk and return file path
         if (p.inlineData) {
           const inlineData = p.inlineData as Record<string, unknown>;
@@ -86,10 +86,10 @@ export function deduplicateThinkingText(
             return { text: result };
           }
         }
-        
+
         if (p.thought === true || p.type === 'thinking') {
           const fullText = (p.text || p.thinking || '') as string;
-          
+
           if (displayedThinkingHashes) {
             const hash = hashString(fullText);
             if (displayedThinkingHashes.has(hash)) {
@@ -134,7 +134,7 @@ export function deduplicateThinkingText(
       const b = block as Record<string, unknown> | null;
       if (b?.type === 'thinking') {
         const fullText = (b.thinking || b.text || '') as string;
-        
+
         if (displayedThinkingHashes) {
           const hash = hashString(fullText);
           if (displayedThinkingHashes.has(hash)) {
@@ -180,6 +180,7 @@ export function transformSseLine(
   callbacks: StreamingCallbacks,
   options: StreamingOptions,
   debugState: { injected: boolean },
+  toolUseSignatureStore?: { set: (sessionKey: string, toolId: string, signature: string) => void },
 ): string {
   if (!line.startsWith('data:')) {
     return line;
@@ -199,6 +200,7 @@ export function transformSseLine(
           signatureStore,
           thoughtBuffer,
           callbacks.onCacheSignature,
+          toolUseSignatureStore,
         );
       }
 
@@ -218,7 +220,7 @@ export function transformSseLine(
         : response;
       return `data: ${JSON.stringify(transformed)}`;
     }
-  } catch (_) {}
+  } catch (_) { }
   return line;
 }
 
@@ -228,18 +230,17 @@ export function cacheThinkingSignaturesFromResponse(
   signatureStore: SignatureStore,
   thoughtBuffer: ThoughtBuffer,
   onCacheSignature?: (sessionKey: string, text: string, signature: string) => void,
+  toolUseSignatureStore?: { set: (sessionKey: string, toolId: string, signature: string) => void },
 ): void {
   if (!response || typeof response !== 'object') return;
-
   const resp = response as Record<string, unknown>;
-
   if (Array.isArray(resp.candidates)) {
     resp.candidates.forEach((candidate: unknown, index: number) => {
       const cand = candidate as Record<string, unknown> | null;
       if (!cand?.content) return;
       const content = cand.content as Record<string, unknown>;
       if (!Array.isArray(content.parts)) return;
-
+      let lastSignature: string | undefined;
       content.parts.forEach((part: unknown) => {
         const p = part as Record<string, unknown>;
         if (p.thought === true || p.type === 'thinking') {
@@ -249,21 +250,31 @@ export function cacheThinkingSignaturesFromResponse(
             thoughtBuffer.set(index, current + text);
           }
         }
-
         if (p.thoughtSignature) {
           const fullText = thoughtBuffer.get(index) ?? '';
           if (fullText) {
             const signature = p.thoughtSignature as string;
+            lastSignature = signature;
             onCacheSignature?.(signatureSessionKey, fullText, signature);
             signatureStore.set(signatureSessionKey, { text: fullText, signature });
+          }
+        }
+        // Catch tool_use and associate with last known signature in this candidate
+        if (toolUseSignatureStore && lastSignature) {
+          const toolUse = p.functionCall || p.tool_use || p.toolUse;
+          if (toolUse && typeof toolUse === 'object') {
+            const toolId = (toolUse as any).id;
+            if (toolId) {
+              toolUseSignatureStore.set(signatureSessionKey, toolId, lastSignature);
+            }
           }
         }
       });
     });
   }
-
   if (Array.isArray(resp.content)) {
     let thinkingText = '';
+    let lastSignature: string | undefined;
     resp.content.forEach((block: unknown) => {
       const b = block as Record<string, unknown> | null;
       if (b?.type === 'thinking') {
@@ -271,8 +282,16 @@ export function cacheThinkingSignaturesFromResponse(
       }
       if (b?.signature && thinkingText) {
         const signature = b.signature as string;
+        lastSignature = signature;
         onCacheSignature?.(signatureSessionKey, thinkingText, signature);
         signatureStore.set(signatureSessionKey, { text: thinkingText, signature });
+      }
+      // Catch tool_use in message format
+      if (toolUseSignatureStore && lastSignature && b?.type === 'tool_use') {
+        const toolId = b.id as string;
+        if (toolId) {
+          toolUseSignatureStore.set(signatureSessionKey, toolId, lastSignature);
+        }
       }
     });
   }
@@ -282,6 +301,7 @@ export function createStreamingTransformer(
   signatureStore: SignatureStore,
   callbacks: StreamingCallbacks,
   options: StreamingOptions = {},
+  toolUseSignatureStore?: { set: (sessionKey: string, toolId: string, signature: string) => void },
 ): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
@@ -306,6 +326,7 @@ export function createStreamingTransformer(
           callbacks,
           options,
           debugState,
+          toolUseSignatureStore,
         );
         controller.enqueue(encoder.encode(transformedLine + '\n'));
       }
@@ -322,6 +343,7 @@ export function createStreamingTransformer(
           callbacks,
           options,
           debugState,
+          toolUseSignatureStore,
         );
         controller.enqueue(encoder.encode(transformedLine));
       }

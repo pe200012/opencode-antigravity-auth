@@ -14,7 +14,7 @@ import {
   transformSseLine,
   transformStreamingPayload,
 } from "./core/streaming";
-import { defaultSignatureStore } from "./stores/signature-store";
+import { defaultSignatureStore, toolUseSignatureStore } from "./stores/signature-store";
 import {
   DEBUG_MESSAGE_PREFIX,
   isDebugEnabled,
@@ -1197,6 +1197,30 @@ export function prepareAntigravityRequest(
             return { ...content, parts: newParts };
           });
 
+          // Inject thought_signature onto functionCall parts for Gemini 3 models
+          // This restores the signature that was cached during response processing
+          // and is required by Vertex AI API for function call validation
+          requestPayload.contents = (requestPayload.contents as any[]).map((content: any) => {
+            if (!content || !Array.isArray(content.parts)) {
+              return content;
+            }
+
+            const newParts = content.parts.map((part: any) => {
+              if (part && typeof part === "object" && part.functionCall && part.functionCall.id) {
+                const call = { ...part.functionCall };
+                const signature = toolUseSignatureStore.get(signatureSessionKey, call.id);
+                if (signature) {
+                  // API expects snake_case thought_signature
+                  (call as any).thought_signature = signature;
+                }
+                return { ...part, functionCall: call };
+              }
+              return part;
+            });
+
+            return { ...content, parts: newParts };
+          });
+
           // Second pass: match functionResponses to their corresponding calls (FIFO order)
           requestPayload.contents = (requestPayload.contents as any[]).map((content: any) => {
             if (!content || !Array.isArray(content.parts)) {
@@ -1485,6 +1509,7 @@ export async function transformAntigravityResponse(
         cacheSignatures,
         displayedThinkingHashes: effectiveModel && isGemini3Model(effectiveModel) ? sessionDisplayedThinkingHashes : undefined,
       },
+      toolUseSignatureStore,
     );
     return new Response(response.body.pipeThrough(streamingTransformer), {
       status: response.status,
